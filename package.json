@@ -4,9 +4,9 @@
   "description": "Doctor appointment booking and queue tracking backend. Built with Node.js, Express and PostgreSQL.",
   "main": "index.js",
   "scripts": {
-  "start": "node src/server.js",
-  "dev": "nodemon src/server.js"
-},
+    "start": "node src/server.js",
+    "dev": "nodemon src/server.js"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/syneadityaa/MEDIFLOW.git"
@@ -20,10 +20,12 @@
   },
   "homepage": "https://github.com/syneadityaa/MEDIFLOW#readme",
   "dependencies": {
+    "@prisma/client": "^6.19.3",
     "dotenv": "^18.0.8",
     "express": "^5.3.0"
   },
   "devDependencies": {
-    "nodemon": "^3.1.14"
+    "nodemon": "^3.1.14",
+    "prisma": "^6.19.3"
   }
 }
