@@ -1,0 +1,83 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  PATIENT
+  DOCTOR
+  ADMIN
+}
+
+enum AppointmentStatus {
+  BOOKED
+  CHECKED_IN
+  IN_CONSULTATION
+  DONE
+  NO_SHOW
+  CANCELLED
+}
+
+model User {
+  id           Int           @id @default(autoincrement())
+  name         String
+  email        String        @unique
+  passwordHash String
+  role         Role          @default(PATIENT)
+  createdAt    DateTime      @default(now())
+  doctor       Doctor?
+  appointments Appointment[]
+}
+
+model Specialty {
+  id      Int      @id @default(autoincrement())
+  name    String   @unique
+  doctors Doctor[]
+}
+
+model Doctor {
+  id             Int       @id @default(autoincrement())
+  userId         Int       @unique
+  user           User      @relation(fields: [userId], references: [id])
+  specialtyId    Int
+  specialty      Specialty @relation(fields: [specialtyId], references: [id])
+  avgConsultMins Int       @default(15)
+  rating         Float     @default(0)
+  slots          Slot[]
+
+  @@index([specialtyId])
+}
+
+model Slot {
+  id          Int          @id @default(autoincrement())
+  doctorId    Int
+  doctor      Doctor       @relation(fields: [doctorId], references: [id])
+  startsAt    DateTime
+  endsAt      DateTime
+  isBooked    Boolean      @default(false)
+  appointment Appointment?
+
+  @@unique([doctorId, startsAt])
+  @@index([doctorId, startsAt])
+}
+
+model Appointment {
+  id          Int               @id @default(autoincrement())
+  patientId   Int
+  patient     User              @relation(fields: [patientId], references: [id])
+  slotId      Int               @unique
+  slot        Slot              @relation(fields: [slotId], references: [id])
+  status      AppointmentStatus @default(BOOKED)
+  queueNumber Int?
+  checkedInAt DateTime?
+  startedAt   DateTime?
+  endedAt     DateTime?
+  notifiedAt  DateTime?
+  createdAt   DateTime          @default(now())
+
+  @@index([patientId])
+}
