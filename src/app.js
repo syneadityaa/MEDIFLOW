@@ -1,6 +1,7 @@
 const express = require('express');
 const prisma = require('./config/prisma');
 const { notFound, errorHandler } = require('./middleware/errorHandler');
+const registerationRoutes = require('./routes/routes.registeration');
 
 const app = express();
 
@@ -14,6 +15,8 @@ app.get('/health', async (req, res, next) => {
     next(err);
   }
 });
+
+app.use('/api', registerationRoutes);
 
 app.use(notFound);
 app.use(errorHandler);
