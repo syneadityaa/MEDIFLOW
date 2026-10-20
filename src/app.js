@@ -4,6 +4,7 @@ const { notFound, errorHandler } = require('./middleware/errorHandler');
 const registerationRoutes = require('./routes/routes.registeration');
 const loginRoutes = require("./routes/routes.login");
 const authenticateToken = require("./middleware/auth.middleware");
+const authorizeRole = require("./middleware/authorizeRole");
 
 
 
@@ -27,6 +28,32 @@ app.get('/health', async (req, res, next) => {
     next(err);
   }
 });
+
+app.get(
+  "/api/doctor-only",
+  authenticateToken,
+  authorizeRole("DOCTOR"),
+  (req, res) => {
+    res.status(200).json({
+      success: true,
+      message: "Doctor access granted",
+      user: req.user,
+    });
+  }
+);
+
+app.get(
+  "/api/patient-only",
+  authenticateToken,
+  authorizeRole("PATIENT"),
+  (req, res) => {
+    res.status(200).json({
+      success: true,
+      message: "Patient access granted",
+      user: req.user,
+    });
+  }
+);
 
 app.use('/api', registerationRoutes);
 app.use("/api/login", loginRoutes);
