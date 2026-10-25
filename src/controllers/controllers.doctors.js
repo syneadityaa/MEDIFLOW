@@ -122,4 +122,65 @@ const getDoctors = async (req, res) => {
   }
 };
 
-module.exports = { getDoctors };
+const getDoctorSlots = async (req, res) => {
+  try {
+    // 1. Read doctor ID from the URL
+    const doctorId = Number(req.params.doctorId);
+
+    // 2. Validate doctor ID
+    if (!Number.isInteger(doctorId) || doctorId <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid doctor ID",
+      });
+    }
+
+    // 3. Check whether the doctor exists
+    const doctor = await prisma.doctor.findUnique({
+      where: { id: doctorId },
+      select: { id: true },
+    });
+
+    if (!doctor) {
+      return res.status(404).json({
+        success: false,
+        message: "Doctor not found",
+      });
+    }
+
+    // 4. Find available future slots
+    const slots = await prisma.slot.findMany({
+      where: {
+        doctorId,
+        isBooked: false,
+        startsAt: {
+          gt: new Date(),
+        },
+      },
+      orderBy: {
+        startsAt: "asc",
+      },
+      select: {
+        id: true,
+        startsAt: true,
+        endsAt: true,
+      },
+    });
+
+    // 5. Return the available slots
+    return res.status(200).json({
+      success: true,
+      count: slots.length,
+      data: slots,
+    });
+  } catch (error) {
+    console.error("Error fetching doctor slots:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch doctor slots",
+    });
+  }
+};
+
+module.exports = { getDoctors ,getDoctorSlots};
