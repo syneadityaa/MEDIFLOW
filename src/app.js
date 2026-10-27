@@ -6,6 +6,7 @@ const loginRoutes = require("./routes/routes.login");
 const authenticateToken = require("./middleware/auth.middleware");
 const authorizeRole = require("./middleware/authorizeRole");
 const doctorRoutes = require("./routes/routes.doctors");
+const appointmentRoutes = require("./routes/routes.appointments");
 
 
 
@@ -59,6 +60,7 @@ app.get(
 app.use('/api', registerationRoutes);
 app.use("/api/login", loginRoutes);
 app.use("/api/doctors", doctorRoutes);
+app.use("/api/appointments", appointmentRoutes);
 
 app.use(notFound);
 app.use(errorHandler);
