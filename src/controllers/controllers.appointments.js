@@ -1,6 +1,51 @@
 
 const prisma = require("../config/prisma");
 
+// Convert timestamps to readable Indian Standard Time (IST).
+const toIST = (date) => {
+  if (!date) return null;
+
+  return new Date(date).toLocaleString("en-IN", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: true,
+  });
+};
+
+// Format appointment timestamps without changing other fields.
+const formatAppointment = (appointment) => {
+  if (!appointment) return appointment;
+
+  const formatted = { ...appointment };
+
+  for (const field of [
+    "createdAt",
+    "checkedInAt",
+    "startedAt",
+    "endedAt",
+    "notifiedAt",
+  ]) {
+    if (formatted[field]) {
+      formatted[field] = toIST(formatted[field]);
+    }
+  }
+
+  if (formatted.slot) {
+    formatted.slot = {
+      ...formatted.slot,
+      startsAt: toIST(formatted.slot.startsAt),
+      endsAt: toIST(formatted.slot.endsAt),
+    };
+  }
+
+  return formatted;
+};
+
 const bookAppointment = async (req, res, next) => {
   try {
     const slotId = Number(req.body.slotId);
@@ -21,6 +66,8 @@ const bookAppointment = async (req, res, next) => {
     }
 
     const appointment = await prisma.$transaction(async (tx) => {
+      const now = new Date();
+
       const slot = await tx.slot.findUnique({
         where: { id: slotId },
       });
@@ -31,22 +78,20 @@ const bookAppointment = async (req, res, next) => {
         throw error;
       }
 
-      if (slot.startsAt <= new Date()) {
+      if (slot.startsAt <= now) {
         const error = new Error("Cannot book a slot in the past");
         error.statusCode = 400;
         throw error;
       }
 
-      // Atomically claim the slot. Only one request can succeed.
+      // Atomically claim the slot to prevent double booking.
       const result = await tx.slot.updateMany({
         where: {
           id: slotId,
           isBooked: false,
-          startsAt: { gt: new Date() },
+          startsAt: { gt: now },
         },
-        data: {
-          isBooked: true,
-        },
+        data: { isBooked: true },
       });
 
       if (result.count !== 1) {
@@ -75,7 +120,7 @@ const bookAppointment = async (req, res, next) => {
     return res.status(201).json({
       success: true,
       message: "Appointment booked successfully",
-      data: appointment,
+      data: formatAppointment(appointment),
     });
   } catch (error) {
     if (error.statusCode) {
@@ -96,17 +141,22 @@ const bookAppointment = async (req, res, next) => {
   }
 };
 
-
-
 const checkInAppointment = async (req, res, next) => {
   try {
     const appointmentId = Number(req.params.id);
-    const patientId = Number(req.user.id);
+    const patientId = Number(req.user?.id ?? req.user?.userId);
 
     if (!Number.isInteger(appointmentId) || appointmentId <= 0) {
       return res.status(400).json({
         success: false,
         message: "A valid appointment ID is required",
+      });
+    }
+
+    if (!Number.isInteger(patientId) || patientId <= 0) {
+      return res.status(401).json({
+        success: false,
+        message: "Invalid patient identity in authentication token",
       });
     }
 
@@ -146,18 +196,17 @@ const checkInAppointment = async (req, res, next) => {
     return res.status(200).json({
       success: true,
       message: "Appointment checked in successfully",
-      data: updatedAppointment,
+      data: formatAppointment(updatedAppointment),
     });
   } catch (error) {
     return next(error);
   }
 };
 
-
 const startConsultation = async (req, res, next) => {
   try {
     const appointmentId = Number(req.params.id);
-    const doctorUserId = Number(req.user.id);
+    const doctorUserId = Number(req.user?.id ?? req.user?.userId);
 
     if (!Number.isInteger(appointmentId) || appointmentId <= 0) {
       return res.status(400).json({
@@ -167,7 +216,6 @@ const startConsultation = async (req, res, next) => {
     }
 
     const result = await prisma.$transaction(async (tx) => {
-      // Find the logged-in doctor's database record.
       const doctor = await tx.doctor.findUnique({
         where: { userId: doctorUserId },
       });
@@ -179,15 +227,14 @@ const startConsultation = async (req, res, next) => {
       }
 
       // Serialize consultation starts for this doctor.
+      // SELECT returns rows, so use $queryRaw rather than $executeRaw.
       await tx.$executeRaw`
-        SELECT pg_advisory_xact_lock(${doctor.id})
+        SELECT pg_advisory_xact_lock(${BigInt(doctor.id)})
       `;
 
       const appointment = await tx.appointment.findUnique({
         where: { id: appointmentId },
-        include: {
-          slot: true,
-        },
+        include: { slot: true },
       });
 
       if (!appointment) {
@@ -215,9 +262,7 @@ const startConsultation = async (req, res, next) => {
       const activeConsultation = await tx.appointment.findFirst({
         where: {
           status: "IN_CONSULTATION",
-          slot: {
-            doctorId: doctor.id,
-          },
+          slot: { doctorId: doctor.id },
         },
       });
 
@@ -241,7 +286,7 @@ const startConsultation = async (req, res, next) => {
     return res.status(200).json({
       success: true,
       message: "Consultation started successfully",
-      data: result,
+      data: formatAppointment(result),
     });
   } catch (error) {
     if (error.statusCode) {
@@ -258,7 +303,7 @@ const startConsultation = async (req, res, next) => {
 const completeConsultation = async (req, res, next) => {
   try {
     const appointmentId = Number(req.params.id);
-    const doctorUserId = Number(req.user.id);
+    const doctorUserId = Number(req.user?.id ?? req.user?.userId);
 
     if (!Number.isInteger(appointmentId) || appointmentId <= 0) {
       return res.status(400).json({
@@ -280,7 +325,7 @@ const completeConsultation = async (req, res, next) => {
 
       // Use the same lock as startConsultation.
       await tx.$executeRaw`
-        SELECT pg_advisory_xact_lock(${doctor.id})
+        SELECT pg_advisory_xact_lock(${BigInt(doctor.id)})
       `;
 
       const appointment = await tx.appointment.findUnique({
@@ -322,7 +367,7 @@ const completeConsultation = async (req, res, next) => {
     return res.status(200).json({
       success: true,
       message: "Consultation completed successfully",
-      data: result,
+      data: formatAppointment(result),
     });
   } catch (error) {
     if (error.statusCode) {
@@ -336,4 +381,165 @@ const completeConsultation = async (req, res, next) => {
   }
 };
 
-module.exports = { bookAppointment , checkInAppointment, startConsultation , completeConsultation};
+
+const cancelAppointment = async (req, res) => {
+  try {
+    const appointmentId = Number(req.params.id);
+    const patientId = Number(req.user.id);
+
+    if (
+      !Number.isInteger(appointmentId) ||
+      appointmentId <= 0
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid appointment ID",
+      });
+    }
+
+    const appointment = await prisma.appointment.findFirst({
+      where: {
+        id: appointmentId,
+        patientId,
+      },
+    });
+
+    if (!appointment) {
+      return res.status(404).json({
+        success: false,
+        message: "Appointment not found",
+      });
+    }
+
+    if (appointment.status !== "BOOKED") {
+      return res.status(400).json({
+        success: false,
+        message: "Only booked appointments can be cancelled",
+      });
+    }
+
+    const cancelled = await prisma.appointment.updateMany({
+      where: {
+        id: appointmentId,
+        patientId,
+        status: "BOOKED",
+      },
+      data: {
+        status: "CANCELLED",
+      },
+    });
+
+    if (cancelled.count === 0) {
+      return res.status(409).json({
+        success: false,
+        message: "Appointment status changed; please try again",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Appointment cancelled successfully",
+    });
+  } catch (error) {
+    console.error("Error cancelling appointment:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to cancel appointment",
+    });
+  }
+};
+
+
+const markNoShow = async (req, res) => {
+  try {
+    const appointmentId = Number(req.params.id);
+    const userId = Number(req.user.id);
+
+    if (!Number.isInteger(appointmentId) || appointmentId <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid appointment ID",
+      });
+    }
+
+    const doctor = await prisma.doctor.findUnique({
+      where: { userId },
+    });
+
+    if (!doctor) {
+      return res.status(403).json({
+        success: false,
+        message: "Doctor profile not found",
+      });
+    }
+
+    const appointment = await prisma.appointment.findUnique({
+      where: { id: appointmentId },
+      include: { slot: true },
+    });
+
+    if (!appointment) {
+      return res.status(404).json({
+        success: false,
+        message: "Appointment not found",
+      });
+    }
+
+    if (appointment.slot.doctorId !== doctor.id) {
+      return res.status(403).json({
+        success: false,
+        message: "This appointment does not belong to this doctor",
+      });
+    }
+
+    if (!["BOOKED", "CHECKED_IN"].includes(appointment.status)) {
+      return res.status(400).json({
+        success: false,
+        message: "This appointment cannot be marked as no-show",
+      });
+    }
+
+    const result = await prisma.appointment.updateMany({
+      where: {
+        id: appointmentId,
+        status: appointment.status,
+        slot: {
+          doctorId: doctor.id,
+        },
+      },
+      data: {
+        status: "NO_SHOW",
+      },
+    });
+
+    if (result.count === 0) {
+      return res.status(409).json({
+        success: false,
+        message: "Appointment status changed; please try again",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Appointment marked as no-show",
+    });
+  } catch (error) {
+    console.error("Error marking no-show:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to mark appointment as no-show",
+    });
+  }
+};
+
+
+module.exports = {
+  bookAppointment,
+  checkInAppointment,
+  startConsultation,
+  completeConsultation,
+  cancelAppointment,
+  markNoShow,
+};
