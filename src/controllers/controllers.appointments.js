@@ -534,6 +534,122 @@ const markNoShow = async (req, res) => {
   }
 };
 
+const getMyAppointments = async (req, res) => {
+  try {
+    const patientId = req.user.id;
+
+    const appointments = await prisma.appointment.findMany({
+      where: {
+        patientId: patientId,
+      },
+      include: {
+        slot: {
+          include: {
+            doctor: {
+              include: {
+                user: {
+                  select: {
+                    id: true,
+                    name: true,
+                    email: true,
+                  },
+                },
+                specialty: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
+    });
+
+    return res.status(200).json({
+      count: appointments.length,
+      appointments: appointments.map(formatAppointment),
+    });
+  } catch (error) {
+    console.error("Get my appointments error:", error);
+
+    return res.status(500).json({
+      message: "Failed to fetch appointments",
+    });
+  }
+};
+
+const getDoctorTodayAppointments = async (req, res) => {
+  try {
+    const doctorUserId = Number(req.user?.id ?? req.user?.userId);
+
+    const doctor = await prisma.doctor.findUnique({
+      where: { userId: doctorUserId },
+    });
+
+    if (!doctor) {
+      return res.status(404).json({
+        message: "Doctor profile not found",
+      });
+    }
+
+    // Get today's date in Indian Standard Time.
+    const now = new Date();
+    const istDate = new Intl.DateTimeFormat("en-CA", {
+     timeZone: "Asia/Kolkata",
+     year: "numeric",
+     month: "2-digit",
+     day: "2-digit",
+}).format(now);
+
+const startOfDay = new Date(`${istDate}T00:00:00+05:30`);
+const endOfDay = new Date(startOfDay.getTime() + 24 * 60 * 60 * 1000);
+
+    const appointments = await prisma.appointment.findMany({
+      where: {
+        slot: {
+          doctorId: doctor.id,
+          startsAt: {
+            gte: startOfDay,
+            lt: endOfDay,
+          },
+        },
+      },
+      include: {
+        patient: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+          },
+        },
+        slot: {
+          select: {
+            id: true,
+            startsAt: true,
+            endsAt: true,
+          },
+        },
+      },
+      orderBy: {
+        slot: {
+          startsAt: "asc",
+        },
+      },
+    });
+
+    return res.status(200).json({
+      count: appointments.length,
+      appointments: appointments.map(formatAppointment),
+    });
+  } catch (error) {
+    console.error("Get today's doctor appointments error:", error);
+
+    return res.status(500).json({
+      message: "Failed to fetch today's appointments",
+    });
+  }
+};
+
 
 module.exports = {
   bookAppointment,
@@ -542,4 +658,6 @@ module.exports = {
   completeConsultation,
   cancelAppointment,
   markNoShow,
+  getMyAppointments,
+  getDoctorTodayAppointments,
 };
