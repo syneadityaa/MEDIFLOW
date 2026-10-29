@@ -9,6 +9,8 @@ const {
   completeConsultation,
   cancelAppointment,
   markNoShow,
+  getMyAppointments,
+  getDoctorTodayAppointments,
 } = require("../controllers/controllers.appointments");
 
 
@@ -30,6 +32,11 @@ router.patch("/:id/complete", authorizeRole("DOCTOR"), completeConsultation);
 router.patch("/:id/cancel", authenticateToken, cancelAppointment);
 
 router.patch("/:id/no-show", authorizeRole("DOCTOR"), markNoShow);
+
+router.get("/mine", authorizeRole("PATIENT"), getMyAppointments);
+
+router.get("/doctor/today",authorizeRole("DOCTOR"),getDoctorTodayAppointments
+);
 
 
 module.exports = router;

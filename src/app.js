@@ -7,12 +7,15 @@ const authenticateToken = require("./middleware/auth.middleware");
 const authorizeRole = require("./middleware/authorizeRole");
 const doctorRoutes = require("./routes/routes.doctors");
 const appointmentRoutes = require("./routes/routes.appointments");
+const cors = require("cors");
 
 
 
 const app = express();
 
+app.use(cors());
 app.use(express.json());
+
 
 app.get("/api/protected", authenticateToken, (req, res) => {
   return res.status(200).json({

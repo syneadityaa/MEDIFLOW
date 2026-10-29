@@ -46,6 +46,26 @@ async function loginUser(req, res, next) {
       });
     }
 
+
+let doctorId = null;
+
+if (user.role === "DOCTOR") {
+  const doctor = await prisma.doctor.findUnique({
+    where: { userId: user.id },
+    select: { id: true },
+  });
+
+  if (!doctor) {
+    return res.status(404).json({
+      success: false,
+      message: "Doctor profile not found",
+    });
+  }
+
+  doctorId = doctor.id;
+}
+
+
     const token = jwt.sign(
       {
         userId: user.id,
@@ -60,11 +80,12 @@ async function loginUser(req, res, next) {
       message: "Login successful",
       token,
       user: {
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        role: user.role,
-      },
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      ...(user.role === "DOCTOR" && { doctorId }),
+},
     });
   } catch (error) {
     next(error);
