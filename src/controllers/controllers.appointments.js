@@ -1,49 +1,10 @@
 
 const prisma = require("../config/prisma");
 
-// Convert timestamps to readable Indian Standard Time (IST).
-const toIST = (date) => {
-  if (!date) return null;
-
-  return new Date(date).toLocaleString("en-IN", {
-    timeZone: "Asia/Kolkata",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: true,
-  });
-};
-
-// Format appointment timestamps without changing other fields.
+// Keep timestamps in their original Date format.
+// Express will serialize them into standard ISO strings.
 const formatAppointment = (appointment) => {
-  if (!appointment) return appointment;
-
-  const formatted = { ...appointment };
-
-  for (const field of [
-    "createdAt",
-    "checkedInAt",
-    "startedAt",
-    "endedAt",
-    "notifiedAt",
-  ]) {
-    if (formatted[field]) {
-      formatted[field] = toIST(formatted[field]);
-    }
-  }
-
-  if (formatted.slot) {
-    formatted.slot = {
-      ...formatted.slot,
-      startsAt: toIST(formatted.slot.startsAt),
-      endsAt: toIST(formatted.slot.endsAt),
-    };
-  }
-
-  return formatted;
+  return appointment;
 };
 
 const bookAppointment = async (req, res, next) => {
@@ -227,7 +188,6 @@ const startConsultation = async (req, res, next) => {
       }
 
       // Serialize consultation starts for this doctor.
-      // SELECT returns rows, so use $queryRaw rather than $executeRaw.
       await tx.$executeRaw`
         SELECT pg_advisory_xact_lock(${BigInt(doctor.id)})
       `;
@@ -381,16 +341,12 @@ const completeConsultation = async (req, res, next) => {
   }
 };
 
-
 const cancelAppointment = async (req, res) => {
   try {
     const appointmentId = Number(req.params.id);
     const patientId = Number(req.user.id);
 
-    if (
-      !Number.isInteger(appointmentId) ||
-      appointmentId <= 0
-    ) {
+    if (!Number.isInteger(appointmentId) || appointmentId <= 0) {
       return res.status(400).json({
         success: false,
         message: "Invalid appointment ID",
@@ -449,7 +405,6 @@ const cancelAppointment = async (req, res) => {
     });
   }
 };
-
 
 const markNoShow = async (req, res) => {
   try {
@@ -595,14 +550,14 @@ const getDoctorTodayAppointments = async (req, res) => {
     // Get today's date in Indian Standard Time.
     const now = new Date();
     const istDate = new Intl.DateTimeFormat("en-CA", {
-     timeZone: "Asia/Kolkata",
-     year: "numeric",
-     month: "2-digit",
-     day: "2-digit",
-}).format(now);
+      timeZone: "Asia/Kolkata",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(now);
 
-const startOfDay = new Date(`${istDate}T00:00:00+05:30`);
-const endOfDay = new Date(startOfDay.getTime() + 24 * 60 * 60 * 1000);
+    const startOfDay = new Date(`${istDate}T00:00:00+05:30`);
+    const endOfDay = new Date(startOfDay.getTime() + 24 * 60 * 60 * 1000);
 
     const appointments = await prisma.appointment.findMany({
       where: {
@@ -649,7 +604,6 @@ const endOfDay = new Date(startOfDay.getTime() + 24 * 60 * 60 * 1000);
     });
   }
 };
-
 
 module.exports = {
   bookAppointment,
