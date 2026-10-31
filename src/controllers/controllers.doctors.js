@@ -5,7 +5,6 @@ const getDoctors = async (req, res) => {
   try {
     const { specialty } = req.query;
 
-    // 1. Read and validate pagination parameters
     const page = Number(req.query.page ?? 1);
     const limit = Number(req.query.limit ?? 10);
 
@@ -23,7 +22,6 @@ const getDoctors = async (req, res) => {
       });
     }
 
-    // 2. Validate specialty
     if (
       specialty !== undefined &&
       (typeof specialty !== "string" || !specialty.trim())
@@ -34,7 +32,6 @@ const getDoctors = async (req, res) => {
       });
     }
 
-    // 3. Read and validate sorting parameters
     const sortBy = req.query.sortBy ?? "id";
     const order = req.query.order ?? "asc";
 
@@ -52,7 +49,6 @@ const getDoctors = async (req, res) => {
       });
     }
 
-    // 4. Build the specialty filter
     const where = specialty
       ? {
           specialty: {
@@ -64,16 +60,13 @@ const getDoctors = async (req, res) => {
         }
       : {};
 
-    // 5. Calculate pagination
     const skip = (page - 1) * limit;
 
-    // 6. Build sorting with ID as a tie-breaker
     const orderBy = [
       { [sortBy]: order },
       { id: "asc" },
     ];
 
-    // 7. Fetch doctors and total matching count
     const [doctors, totalDoctors] = await Promise.all([
       prisma.doctor.findMany({
         where,
@@ -100,7 +93,6 @@ const getDoctors = async (req, res) => {
       prisma.doctor.count({ where }),
     ]);
 
-    // 8. Return successful response
     return res.status(200).json({
       success: true,
       count: doctors.length,
@@ -124,10 +116,8 @@ const getDoctors = async (req, res) => {
 
 const getDoctorSlots = async (req, res) => {
   try {
-    // 1. Read doctor ID from the URL
     const doctorId = Number(req.params.doctorId);
 
-    // 2. Validate doctor ID
     if (!Number.isInteger(doctorId) || doctorId <= 0) {
       return res.status(400).json({
         success: false,
@@ -135,7 +125,6 @@ const getDoctorSlots = async (req, res) => {
       });
     }
 
-    // 3. Check whether the doctor exists
     const doctor = await prisma.doctor.findUnique({
       where: { id: doctorId },
       select: { id: true },
@@ -148,7 +137,6 @@ const getDoctorSlots = async (req, res) => {
       });
     }
 
-    // 4. Find available future slots
     const slots = await prisma.slot.findMany({
       where: {
         doctorId,
@@ -167,7 +155,6 @@ const getDoctorSlots = async (req, res) => {
       },
     });
 
-    // 5. Return the available slots
     return res.status(200).json({
       success: true,
       count: slots.length,
@@ -182,7 +169,6 @@ const getDoctorSlots = async (req, res) => {
     });
   }
 };
-
 
 const getDoctorQueue = async (req, res) => {
   try {
@@ -210,11 +196,15 @@ const getDoctorQueue = async (req, res) => {
       });
     }
 
+    // Include booked and checked-in appointments in the projected queue.
+    // The active consultation is handled separately.
     const appointments = await prisma.appointment.findMany({
       where: {
-        slot: { doctorId },
+        slot: {
+          doctorId,
+        },
         status: {
-          in: ["CHECKED_IN", "IN_CONSULTATION"],
+          in: ["BOOKED", "CHECKED_IN", "IN_CONSULTATION"],
         },
       },
       select: {
@@ -231,21 +221,27 @@ const getDoctorQueue = async (req, res) => {
     });
 
     const active = appointments.find(
-      (appointment) => appointment.status === "IN_CONSULTATION"
+      (appointment) =>
+        appointment.status === "IN_CONSULTATION"
     );
 
     const waiting = appointments
-      .filter((appointment) => appointment.status === "CHECKED_IN")
+      .filter(
+        (appointment) =>
+          appointment.status === "BOOKED" ||
+          appointment.status === "CHECKED_IN"
+      )
       .sort((a, b) => {
-        // Patients who checked in after their appointment time
-        // rejoin behind patients already waiting.
+        // Late check-ins rejoin behind patients already waiting.
         const aLate =
+          a.status === "CHECKED_IN" &&
           a.checkedInAt &&
-          a.checkedInAt > a.slot.startsAt;
+          new Date(a.checkedInAt) > new Date(a.slot.startsAt);
 
         const bLate =
+          b.status === "CHECKED_IN" &&
           b.checkedInAt &&
-          b.checkedInAt > b.slot.startsAt;
+          new Date(b.checkedInAt) > new Date(b.slot.startsAt);
 
         if (Boolean(aLate) !== Boolean(bLate)) {
           return aLate ? 1 : -1;
@@ -280,29 +276,49 @@ const getDoctorQueue = async (req, res) => {
         )
       : 0;
 
-    const queue = waiting.map((appointment, index) => {
-      const position = index + 1;
+    // The projected queue starts after the active consultation's
+    // estimated remaining time.
+    let projectedStartTime = now + remainingMins * 60000;
 
-      const estimatedWaitMins = Math.ceil(
-        remainingMins +
-          index * doctor.avgConsultMins
+    const queue = waiting.map((appointment, index) => {
+      // A future booked slot should not be estimated before its
+      // scheduled appointment time.
+      const slotStartTime = new Date(
+        appointment.slot.startsAt
+      ).getTime();
+
+      const estimatedStartTime = Math.max(
+        projectedStartTime,
+        slotStartTime
       );
 
-      return {
+      const estimatedWaitMins = Math.max(
+        0,
+        Math.ceil((estimatedStartTime - now) / 60000)
+      );
+
+      const result = {
         appointmentId: appointment.id,
         status: appointment.status,
-        position,
+        position: index + 1,
         estimatedWaitMins,
         estimatedStartAt: new Date(
-          now + estimatedWaitMins * 60000
+          estimatedStartTime
         ).toISOString(),
       };
+
+      // The next projected appointment follows this consultation.
+      projectedStartTime =
+        estimatedStartTime + doctor.avgConsultMins * 60000;
+
+      return result;
     });
 
     return res.status(200).json({
       success: true,
       doctorId: doctor.id,
       averageConsultationMins: doctor.avgConsultMins,
+
       activeConsultation: active
         ? {
             appointmentId: active.id,
@@ -311,10 +327,12 @@ const getDoctorQueue = async (req, res) => {
             estimatedRemainingMins: Math.ceil(remainingMins),
           }
         : null,
+
       waitingCount: queue.length,
       queue,
+
       estimateNote:
-        "Wait times are estimates and may change as consultations progress.",
+        "Waiting times are estimates based on appointment slots and average consultation duration. They may change as consultations progress or appointments are cancelled or marked as no-show.",
     });
   } catch (error) {
     console.error("Error fetching doctor queue:", error);
